@@ -1,0 +1,6 @@
+# password_manager/requirements.txt
+customtkinter
+cryptography
+pyperclip
+Pillow
+# google-generativeai REMOVED
