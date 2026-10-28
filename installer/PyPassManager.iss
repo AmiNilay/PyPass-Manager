@@ -8,7 +8,10 @@
 ; Never change AppId - Windows uses it to recognise upgrades of the same app.
 
 #define MyAppName "PyPass Manager"
-#define MyAppVersion "2.0.0"
+; CI overrides the version with: ISCC /DMyAppVersion=<tag version>
+#ifndef MyAppVersion
+  #define MyAppVersion "2.0.0"
+#endif
 #define MyAppPublisher "Nilay Naha"
 #define MyAppURL "https://github.com/AmiNilay/PyPass-Manager"
 #define MyAppExeName "PyPass Manager.exe"

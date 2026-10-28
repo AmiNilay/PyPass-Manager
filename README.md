@@ -1,5 +1,8 @@
 # PyPass Manager
 
+[![CI](https://github.com/AmiNilay/PyPass-Manager/actions/workflows/ci.yml/badge.svg)](https://github.com/AmiNilay/PyPass-Manager/actions/workflows/ci.yml)
+[![Latest release](https://img.shields.io/github/v/release/AmiNilay/PyPass-Manager)](https://github.com/AmiNilay/PyPass-Manager/releases/latest)
+
 A local-first, offline password manager for Windows, built with Python and CustomTkinter.
 Your vault never leaves your computer, and there is no account, cloud or subscription.
 
@@ -110,8 +113,21 @@ the breach check (network mocked) and phishing detection. To also hit the live H
    This creates `installer\Output\PyPass-Manager-Setup-2.0.0.exe`, a single-file installer with Start-menu and desktop shortcuts and an uninstaller.
 4. **Publish it.** Create a GitHub Release (for example tag `v2.0.0`) and attach the setup `.exe`.
 
-When you release a new version, bump `APP_VERSION` in `config/settings.py`, `MyAppVersion` in
-`installer/PyPassManager.iss` and the numbers in `version_info.txt`.
+### Automated releases (GitHub Actions)
+
+Every push and pull request runs the test suite ([ci.yml](.github/workflows/ci.yml)).
+To publish a release, bump the version and push a tag. [release.yml](.github/workflows/release.yml) then runs
+the tests, builds the app and the installer, and publishes a GitHub Release with
+`PyPass-Manager-Setup-x.y.z.exe` and a portable `.zip`:
+
+```bash
+# 1. set APP_VERSION = "2.0.1" in config/settings.py (and the numbers in version_info.txt)
+git commit -am "Release 2.0.1"
+git tag v2.0.1
+git push origin main v2.0.1
+```
+
+The workflow stops if the tag doesn't match `APP_VERSION`.
 
 ---
 
