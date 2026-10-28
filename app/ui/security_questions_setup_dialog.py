@@ -1,163 +1,137 @@
 # password_manager/app/ui/security_questions_setup_dialog.py
-import customtkinter as ctk
-from tkinter import messagebox
+"""
+Dialog for choosing and answering the security questions used for vault recovery.
+"""
 import logging
+from tkinter import messagebox
+
+import customtkinter as ctk
 
 from config import settings
-from app.core.database import PasswordDatabase # To interact with DB
+from app.core.database import PasswordDatabase
+from app.ui.theme import (SURFACE_ACTIVE, BORDER_STRONG, TEXT_PRIMARY, INPUT_BG, FONT_BODY,
+                          BUTTON_RADIUS, INPUT_HEIGHT, ENTRY_STYLE)
+from app.ui.widgets import (dialog_card, dialog_header, dialog_buttons, caption_label,
+                            status_label, center_over, release_grab)
+
+SQ_WIDTH = 420                      # content width inside the card
+PLACEHOLDER_Q = "Select a question..."
 
 
 class SecurityQuestionsSetupDialog(ctk.CTkToplevel):
-    """
-    A dialog for users to set up their security questions and answers
-    after initial master password setup.
-    """
-    def __init__(self, parent, db: PasswordDatabase):
+    """Saves security questions; notifies the parent via _security_questions_setup_done/_cancelled."""
+
+    def __init__(self, parent, db: PasswordDatabase, vault_key: bytes):
         super().__init__(parent)
         self.db = db
-        self.parent_window = parent # Keep a reference to the parent (LoginWindow)
-
-        self.title("Set Up Security Questions")
-        # Adjust geometry based on number of questions
-        num_questions = settings.NUMBER_OF_SECURITY_QUESTIONS_TO_SET
-        dialog_height = 200 + (num_questions * 75) # Base height + per question
-        self.geometry(f"550x{dialog_height}")
-        self.resizable(False, False)
-
-        self.protocol("WM_DELETE_WINDOW", self._on_closing_warning) # Warn if closed prematurely
-        self.grab_set() # Make modal
-        self.lift()     # Bring to front
-        self.focus()
-
-        self.questions_widgets = [] # To store (option_menu, answer_entry) tuples
-        self.setup_complete = False # Flag to indicate successful setup
-
-        self._create_widgets()
-        self.after(50, self._center_dialog)
-
-    def _center_dialog(self):
+        self.vault_key = vault_key
+        self.parent_window = parent
+        # Replacing existing questions: closing without saving keeps the old ones
         try:
-            self.update_idletasks()
-            parent_x = self.master.winfo_x()
-            parent_y = self.master.winfo_y()
-            parent_w = self.master.winfo_width()
-            parent_h = self.master.winfo_height()
-            win_w = self.winfo_width()
-            win_h = self.winfo_height()
-            x = max(0, parent_x + (parent_w // 2) - (win_w // 2))
-            y = max(0, parent_y + (parent_h // 2) - (win_h // 2))
-            self.geometry(f"+{x}+{y}")
-        except Exception as e:
-            logging.warning(f"SQDialog: Could not center dialog: {e}")
+            self.replacing_existing = bool(self.db.are_security_questions_set())
+        except Exception:
+            self.replacing_existing = False
+        # A transient of a withdrawn window is hidden too (LoginWindow withdraws itself first)
+        try:
+            if parent is not None and parent.winfo_viewable():
+                self.transient(parent)
+        except Exception:
+            pass
+        self.title("Security Questions Setup")
+        self.resizable(False, False)
+        self.protocol("WM_DELETE_WINDOW", self._on_closing_warning)
+        self.grab_set()
+        self.lift()
+        self.focus()
+        self.questions_widgets = []
+        self.setup_complete = False
+        self.after(1, self._create_widgets)
+        self.after(50, lambda: center_over(self, self.master))
 
     def _on_closing_warning(self):
-        """Warn user if they try to close without saving."""
         if not self.setup_complete:
-            if messagebox.askyesno("Confirm Close",
-                                   "Security questions are not saved. Are you sure you want to close?\n"
-                                   "You will not be able to use password recovery without them.",
-                                   icon='warning', parent=self):
-                self.grab_release()
-                self.destroy()
+            if self.replacing_existing:
+                confirmed = messagebox.askyesno("Discard Changes",
+                                                "Close without saving?\n"
+                                                "Your existing security questions will be kept.",
+                                                parent=self)
             else:
-                return # Do not close
+                confirmed = messagebox.askyesno("Confirm Close",
+                                                "Security questions not saved. Close anyway?\n"
+                                                "You won't be able to recover your password.",
+                                                icon='warning', parent=self)
+            if confirmed:
+                release_grab(self)
+                self.destroy()
+                if hasattr(self.parent_window, '_security_questions_setup_cancelled'):
+                    self.parent_window._security_questions_setup_cancelled()
         else:
-            self.grab_release()
+            release_grab(self)
             self.destroy()
 
-
     def _create_widgets(self):
-        """Creates the UI elements for the dialog."""
-        self.grid_columnconfigure(0, weight=1)
+        main = dialog_card(self)
+        n = settings.NUMBER_OF_SECURITY_QUESTIONS_TO_SET
+        dialog_header(main, "Set up account recovery",
+                      f"Choose and answer {n} security questions. If you forget your master "
+                      "password, these let you regain access. Capitalisation and extra spaces "
+                      "don't matter.", wrap=SQ_WIDTH)
 
-        main_frame = ctk.CTkFrame(self)
-        main_frame.pack(padx=20, pady=20, fill="both", expand=True)
-        main_frame.grid_columnconfigure(1, weight=1) # Allow entry fields to expand
+        question_options = [PLACEHOLDER_Q] + settings.PREDEFINED_SECURITY_QUESTIONS
 
-        instruction_label = ctk.CTkLabel(main_frame,
-                                         text=f"Please select and answer {settings.NUMBER_OF_SECURITY_QUESTIONS_TO_SET} security questions.\n"
-                                              "These will be used to recover your master password if you forget it.\n"
-                                              "Answers are case-sensitive.",
-                                         wraplength=500, justify="left")
-        instruction_label.grid(row=0, column=0, columnspan=2, padx=10, pady=(10, 15), sticky="ew")
+        for i in range(n):
+            caption_label(main, f"Question {i + 1}").pack(fill="x", pady=(14, 6))
+            q_var = ctk.StringVar(value=question_options[0])
+            q_menu = ctk.CTkOptionMenu(main, variable=q_var, values=question_options,
+                                       width=SQ_WIDTH, height=INPUT_HEIGHT, font=FONT_BODY,
+                                       dropdown_font=FONT_BODY, fg_color=INPUT_BG,
+                                       button_color=SURFACE_ACTIVE, button_hover_color=BORDER_STRONG,
+                                       text_color=TEXT_PRIMARY, corner_radius=BUTTON_RADIUS,
+                                       dynamic_resizing=False)
+            q_menu.pack(fill="x")
+            ans_entry = ctk.CTkEntry(main, placeholder_text="Your answer (min. 4 characters)",
+                                     **{**ENTRY_STYLE, "width": SQ_WIDTH})
+            ans_entry.pack(fill="x", pady=(8, 0))
+            self.questions_widgets.append((q_var, ans_entry, q_menu))
 
-        # Create question/answer sections
-        for i in range(settings.NUMBER_OF_SECURITY_QUESTIONS_TO_SET):
-            q_label_text = f"Question {i+1}:"
-            q_label = ctk.CTkLabel(main_frame, text=q_label_text)
-            q_label.grid(row=i*2 + 1, column=0, padx=10, pady=(10,0), sticky="w")
-
-            # Filter out already selected questions for subsequent dropdowns
-            # This is a bit complex for dynamic dropdowns, so for now, we allow re-selection
-            # but will validate for uniqueness on save.
-            question_options = ["Select a question..."] + settings.PREDEFINED_SECURITY_QUESTIONS
-            question_var = ctk.StringVar(value=question_options[0])
-            question_menu = ctk.CTkOptionMenu(main_frame, variable=question_var, values=question_options, width=400)
-            question_menu.grid(row=i*2 + 1, column=1, padx=10, pady=(10,0), sticky="ew")
-
-            ans_label_text = f"Answer {i+1}:"
-            ans_label = ctk.CTkLabel(main_frame, text=ans_label_text)
-            ans_label.grid(row=i*2 + 2, column=0, padx=10, pady=(0,10), sticky="w")
-
-            answer_entry = ctk.CTkEntry(main_frame, width=400)
-            answer_entry.grid(row=i*2 + 2, column=1, padx=10, pady=(0,10), sticky="ew")
-
-            self.questions_widgets.append((question_var, answer_entry, question_menu)) # Store var and menu
-
-        # Save Button
-        save_button = ctk.CTkButton(main_frame, text="Save Security Questions", command=self._save_questions)
-        save_button.grid(row=settings.NUMBER_OF_SECURITY_QUESTIONS_TO_SET * 2 + 1, column=0, columnspan=2, pady=(20, 10))
-
+        self.status_label = status_label(main, wrap=SQ_WIDTH)
+        self.status_label.pack(fill="x", pady=(10, 0))
+        dialog_buttons(main, "Save questions", self._save_questions, self._on_closing_warning,
+                       cancel_text="Skip" if not self.replacing_existing else "Cancel")
 
     def _save_questions(self):
-        """Validates and saves the security questions and answers."""
         questions_data = []
-        selected_questions_texts = set()
-
+        selected = set()
+        self.status_label.configure(text="")
         for q_var, ans_entry, q_menu in self.questions_widgets:
-            question_text = q_var.get()
-            answer_text = ans_entry.get().strip() # Strip whitespace from answer
-
-            if question_text == "Select a question...":
-                messagebox.showerror("Validation Error", "Please select a question for all entries.", parent=self)
+            q_text = q_var.get()
+            ans_text = ans_entry.get().strip()
+            if q_text == PLACEHOLDER_Q:
+                self.status_label.configure(text="Please select a question for every slot.")
                 q_menu.focus()
                 return
-            if not answer_text:
-                messagebox.showerror("Validation Error", "Please provide an answer for all selected questions.", parent=self)
+            if not ans_text:
+                self.status_label.configure(text="Please provide an answer for every question.")
                 ans_entry.focus()
                 return
-            if len(answer_text) < 4: # Arbitrary minimum answer length
-                messagebox.showerror("Validation Error", "Answers must be at least 4 characters long.", parent=self)
+            if len(ans_text) < 4:
+                self.status_label.configure(text="Answers must be at least 4 characters.")
                 ans_entry.focus()
                 return
-            if question_text in selected_questions_texts:
-                messagebox.showerror("Validation Error", "Please select unique questions. Each question can only be used once.", parent=self)
+            if q_text in selected:
+                self.status_label.configure(text="Each question can only be used once.")
                 q_menu.focus()
                 return
-
-            selected_questions_texts.add(question_text)
-            questions_data.append({"question_text": question_text, "answer": answer_text})
-
-        if len(questions_data) != settings.NUMBER_OF_SECURITY_QUESTIONS_TO_SET:
-            # This case should be caught by "Select a question..." check, but as a safeguard:
-            messagebox.showerror("Validation Error", f"Please set up all {settings.NUMBER_OF_SECURITY_QUESTIONS_TO_SET} questions.", parent=self)
-            return
-
-        # If validation passes, save to DB
+            selected.add(q_text)
+            questions_data.append({"question_text": q_text, "answer": ans_text})
         try:
-            # Clear any old questions first (in case of re-setup, though this dialog is for initial setup)
-            # self.db.clear_security_questions() # Maybe not here, as this is initial setup
-            for item in questions_data:
-                self.db.set_security_question(item["question_text"], item["answer"])
-            
-            self.setup_complete = True # Mark setup as complete
-            messagebox.showinfo("Setup Complete", "Security questions saved successfully!", parent=self)
-            self.grab_release()
-            self.destroy() # Close dialog on success
-            # Optionally, notify the parent (LoginWindow) to proceed
+            self.db.set_security_questions(questions_data, self.vault_key)
+            self.setup_complete = True
+            messagebox.showinfo("Saved", "Security questions saved!", parent=self)
+            release_grab(self)
+            self.destroy()
             if hasattr(self.parent_window, '_security_questions_setup_done'):
                 self.parent_window._security_questions_setup_done()
-
         except Exception as e:
-            logging.exception("Failed to save security questions to DB.")
-            messagebox.showerror("Database Error", f"Could not save security questions:\n{e}", parent=self)
+            logging.exception("Failed to save security questions.")
+            messagebox.showerror("Error", f"Could not save:\n{e}", parent=self)

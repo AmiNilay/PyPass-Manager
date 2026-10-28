@@ -1,16 +1,22 @@
 # -*- mode: python ; coding: utf-8 -*-
+# PyInstaller build recipe. Build with:
+#   .venv\Scripts\python.exe -m PyInstaller --noconfirm "PyPass Manager.spec"
+# Output: dist\PyPass Manager\PyPass Manager.exe (one-folder build, fast start-up)
+from PyInstaller.utils.hooks import collect_data_files
 
+datas = [('assets', 'assets')]
+datas += collect_data_files('customtkinter')    # built-in themes/fonts customtkinter loads at runtime
 
 a = Analysis(
     ['main.py'],
     pathex=[],
     binaries=[],
-    datas=[('assets', 'assets')],
-    hiddenimports=[],
+    datas=datas,
+    hiddenimports=['PIL._tkinter_finder'],
     hookspath=[],
     hooksconfig={},
     runtime_hooks=[],
-    excludes=[],
+    excludes=['pytest'],
     noarchive=False,
     optimize=0,
 )
@@ -25,7 +31,7 @@ exe = EXE(
     debug=False,
     bootloader_ignore_signals=False,
     strip=False,
-    upx=True,
+    upx=False,                  # UPX-packed executables trigger antivirus false positives
     console=False,
     disable_windowed_traceback=False,
     argv_emulation=False,
@@ -33,13 +39,14 @@ exe = EXE(
     codesign_identity=None,
     entitlements_file=None,
     icon=['assets\\icons\\app_icon.ico'],
+    version='version_info.txt',
 )
 coll = COLLECT(
     exe,
     a.binaries,
     a.datas,
     strip=False,
-    upx=True,
+    upx=False,
     upx_exclude=[],
     name='PyPass Manager',
 )

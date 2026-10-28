@@ -1,128 +1,130 @@
 # password_manager/app/ui/reset_master_password_dialog.py
-import customtkinter as ctk
-from tkinter import messagebox
+"""
+Forgot-password flow, step 2: choose a new master password (or erase a legacy vault).
+"""
 import logging
-from typing import Callable # Import Callable
+from tkinter import messagebox
+from typing import Callable, Optional
+
+import customtkinter as ctk
 
 from config import settings
-from app.core.database import PasswordDatabase # Assuming you need db to set new master password
+from app.core.database import PasswordDatabase
+from app.ui.theme import (DANGER, DANGER_SOFT, ACCENT_SOFT, TEXT_SECONDARY, FONT_SMALL,
+                          BUTTON_RADIUS, BTN_DANGER)
+from app.ui.widgets import (DIALOG_WIDTH, CARD_PAD, dialog_card, dialog_header, dialog_buttons,
+                            labeled_field, password_entry, caps_label, status_label,
+                            bind_caps_lock_warning, center_over, release_grab)
+
+FIELD_WIDTH = DIALOG_WIDTH - 2 * CARD_PAD - 32
+
 
 class ResetMasterPasswordDialog(ctk.CTkToplevel):
-    """
-    Dialog to allow the user to set a new master password after
-    successful security question verification.
-    """
-    def __init__(self, master, db: PasswordDatabase, success_callback: Callable):
+    """Sets a new master password; calls success_callback() when done."""
+
+    def __init__(self, master, db: PasswordDatabase, vault_key: Optional[bytes],
+                 success_callback: Callable[[], None]):
         super().__init__(master)
         self.db = db
-        self.success_callback = success_callback # To notify LoginWindow on success
-        self.parent_window = master # This should be the hidden_root from main.py
-
+        # None means the vault key could not be recovered, so resetting must erase the vault
+        self.vault_key = vault_key
+        self.success_callback = success_callback
+        self.parent_window = master
         self.title("Reset Master Password")
-        self.geometry("400x330") # Adjusted size for content
         self.resizable(False, False)
-        self.protocol("WM_DELETE_WINDOW", self._cancel_reset) # Handle X button
-        self.grab_set() # Make modal
-        self.lift()     # Bring to front
+        self.protocol("WM_DELETE_WINDOW", self._cancel)
+        self.grab_set()
+        self.lift()
         self.focus()
-
-        self._create_widgets()
-        self.after(50, self._center_dialog)
-
-    def _center_dialog(self):
-        try:
-            self.update_idletasks()
-            # Center relative to the screen if master is hidden_root or not a visible window
-            screen_width = self.winfo_screenwidth()
-            screen_height = self.winfo_screenheight()
-            win_w = self.winfo_width()
-            win_h = self.winfo_height()
-            x = (screen_width // 2) - (win_w // 2)
-            y = (screen_height // 2) - (win_h // 2)
-            self.geometry(f"+{x}+{y}")
-        except Exception as e:
-            logging.warning(f"ResetPassDialog: Could not center: {e}")
+        self.after(1, self._create_widgets)
+        self.after(50, lambda: center_over(self))
 
     def _create_widgets(self):
-        main_frame = ctk.CTkFrame(self)
-        main_frame.pack(padx=20, pady=20, fill="both", expand=True)
-        main_frame.grid_columnconfigure(0, weight=1)
+        main = dialog_card(self)
+        dialog_header(main, "Set a new master password",
+                      f"Use at least {settings.MIN_MASTER_PASSWORD_LENGTH} characters. "
+                      "You'll use it to unlock your vault from now on.")
 
-        info_label = ctk.CTkLabel(main_frame,
-                                  text="Enter your new master password below.\n"
-                                       "WARNING: This will make all previously stored\n"
-                                       "passwords unreadable!",
-                                  wraplength=350, justify="center", text_color="orange") # Warning color
-        info_label.grid(row=0, column=0, padx=10, pady=(0, 15), sticky="ew")
+        # Notice banner: neutral when data is kept, danger when the vault must be erased
+        if self.vault_key:
+            notice = "Your stored passwords will be kept."
+            bg, fg = ACCENT_SOFT, TEXT_SECONDARY
+        else:
+            notice = ("This vault was created before recovery keys existed. "
+                      "Resetting will erase all stored passwords.")
+            bg, fg = DANGER_SOFT, DANGER
+        banner = ctk.CTkFrame(main, fg_color=bg, corner_radius=BUTTON_RADIUS)
+        banner.pack(fill="x", pady=(10, 0))
+        ctk.CTkLabel(banner, text=notice, font=FONT_SMALL, text_color=fg, wraplength=FIELD_WIDTH - 10,
+                     justify="left", anchor="w").pack(fill="x", padx=12, pady=8)
 
-        self.new_password_entry = ctk.CTkEntry(main_frame, placeholder_text="New Master Password", show="*", width=280)
-        self.new_password_entry.grid(row=1, column=0, padx=10, pady=5, sticky="ew")
+        self.new_entry = labeled_field(main, "New master password",
+                                       lambda p: password_entry(p, width=FIELD_WIDTH))
+        self.confirm_entry = labeled_field(main, "Confirm new password",
+                                           lambda p: password_entry(p, width=FIELD_WIDTH))
 
-        self.confirm_password_entry = ctk.CTkEntry(main_frame, placeholder_text="Confirm New Password", show="*", width=280)
-        self.confirm_password_entry.grid(row=2, column=0, padx=10, pady=5, sticky="ew")
+        self.caps_label = caps_label(main)
+        self.caps_label.pack(fill="x", pady=(8, 0))
+        bind_caps_lock_warning([self.new_entry, self.confirm_entry], self.caps_label)
+        self.status_label = status_label(main)
+        self.status_label.pack(fill="x")
 
-        self.status_label = ctk.CTkLabel(main_frame, text="", text_color="red")
-        self.status_label.grid(row=3, column=0, padx=10, pady=(5,0), sticky="ew")
+        dialog_buttons(main, "Reset password" if self.vault_key else "Erase & reset",
+                       self._reset_password, self._cancel,
+                       primary_style=None if self.vault_key else BTN_DANGER)
+        self.bind("<Escape>", lambda e: self._cancel())
 
-        reset_button = ctk.CTkButton(main_frame, text="Set New Master Password", command=self._reset_password)
-        reset_button.grid(row=4, column=0, padx=10, pady=(15,10))
+        self.new_entry.focus()
+        self.new_entry.bind("<Return>", lambda e: self.confirm_entry.focus())
+        self.confirm_entry.bind("<Return>", lambda e: self._reset_password())
 
-        self.new_password_entry.focus()
-        # Bind enter key
-        self.new_password_entry.bind("<Return>", lambda e: self.confirm_password_entry.focus())
-        self.confirm_password_entry.bind("<Return>", lambda e: self._reset_password())
-
-    def _set_status(self, message: str, color: str = "red"):
+    def _set_status(self, msg, color=DANGER):
         if hasattr(self, 'status_label') and self.status_label.winfo_exists():
-            self.status_label.configure(text=message, text_color=color)
+            self.status_label.configure(text=msg, text_color=color)
 
     def _reset_password(self):
         self._set_status("")
-        new_password = self.new_password_entry.get()
-        confirm_password = self.confirm_password_entry.get()
-
-        if not new_password or not confirm_password:
-            self._set_status("Both password fields are required.")
+        new = self.new_entry.get()
+        confirm = self.confirm_entry.get()
+        if not new or not confirm:
+            self._set_status("Both fields are required.")
             return
-        if new_password != confirm_password:
-            self._set_status("New passwords do not match.")
+        if new != confirm:
+            self._set_status("Passwords do not match.")
             return
-        if len(new_password) < settings.MIN_MASTER_PASSWORD_LENGTH:
-            self._set_status(f"Password must be at least {settings.MIN_MASTER_PASSWORD_LENGTH} characters.")
+        if len(new) < settings.MIN_MASTER_PASSWORD_LENGTH:
+            self._set_status(f"Minimum {settings.MIN_MASTER_PASSWORD_LENGTH} characters.")
             return
-
         try:
-            # Setting a new master password also clears old salts and security questions.
-            self.db.set_master_password(new_password)
-            logging.info("Master password has been successfully reset.")
-
-            # IMPORTANT WARNING to the user
-            messagebox.showwarning("Password Reset Successful",
-                                  "Your master password has been reset.\n\n"
-                                  "CRITICAL: All previously stored credential passwords are\n"
-                                  "now ENCRYPTED WITH THE NEW KEY and cannot be read\n"
-                                  "using the old master password. Any existing password entries\n"
-                                  "will effectively need to be re-entered or updated.\n\n"
-                                  "You will also need to set up new security questions after logging in.",
-                                  parent=self) # Show relative to this dialog
-            
-            self.grab_release()
+            if self.vault_key:
+                self.db.change_master_password(self.vault_key, new)
+                messagebox.showinfo("Password Reset",
+                                    "Master password has been reset.\nYour stored passwords are intact.",
+                                    parent=self)
+            else:
+                if not messagebox.askyesno("Erase Vault?",
+                                           "Your stored passwords cannot be recovered.\n\n"
+                                           "Erase ALL stored passwords and start a new vault\n"
+                                           "with this master password?",
+                                           icon='warning', parent=self):
+                    return
+                self.db.wipe_vault()
+                self.db.create_vault(new)
+                messagebox.showwarning("Vault Erased",
+                                       "A new, empty vault was created.\n"
+                                       "You will set up security questions after logging in.",
+                                       parent=self)
+            release_grab(self)
             self.destroy()
-            self.success_callback() # Notify the LoginWindow to refresh/re-show
-
+            self.success_callback()
         except ValueError as ve:
             self._set_status(str(ve))
-            logging.error(f"ValueError during password reset: {ve}")
         except Exception as e:
             logging.exception("Failed to reset master password.")
-            messagebox.showerror("Error", f"Could not reset master password:\n{e}", parent=self)
+            messagebox.showerror("Error", f"Could not reset:\n{e}", parent=self)
 
-    def _cancel_reset(self):
-        logging.debug("ResetPassDialog: Reset cancelled by user.")
-        self.grab_release()
+    def _cancel(self):
+        release_grab(self)
         self.destroy()
-        # Notify parent (LoginWindow) that reset was cancelled so it can re-appear
         if hasattr(self.parent_window, 'deiconify_and_focus'):
             self.parent_window.deiconify_and_focus()
-
-# End of file password_manager/app/ui/reset_master_password_dialog.py

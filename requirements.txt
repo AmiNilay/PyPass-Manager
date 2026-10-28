@@ -1,6 +1,9 @@
-# password_manager/requirements.txt
-customtkinter
-cryptography
-pyperclip
-Pillow
-# google-generativeai REMOVED
+# Runtime dependencies (direct imports only). Lower bound = version tested in
+# the venv; upper bound = next major, to avoid surprise breaking changes.
+customtkinter>=6.0,<7
+cryptography>=50.0,<51
+pyperclip>=1.11,<2
+Pillow>=12.3,<13
+qrcode>=7.4,<9
+
+# Dev/test dependencies: see requirements-dev.txt

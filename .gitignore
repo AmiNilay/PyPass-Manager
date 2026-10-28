@@ -1,0 +1,39 @@
+# Gitignore for Python applications
+# Operating System files
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# Python interpreter
+__pycache__/
+*.pyc
+*.pyd
+*.env
+# Virtual environments
+.venv/
+venv/
+env/
+
+# PyInstaller build artifacts (CRITICAL for this issue)
+build/
+dist/
+
+# Logs from your app
+*.log
+# Local app data / database folder
+.pypass_manager/
+
+# Editor/IDE files
+.vscode/
+.idea/
+*.iml
+
+# Specific accidental commits (if xref.html ended up outside build/)
+# If xref-main.html or xref-PyPass Manager.html were committed OUTSIDE the build/ folder
+# in an earlier mishap, you'd add:
+# xref-PyPass Manager.html
+# xref-main.html
+# (But generally, they should be inside build/)
+# Installer output
+installer/Output/
+.pytest_cache/

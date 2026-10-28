@@ -1,52 +1,72 @@
-# password_manager/app/core/encryption.py
+"""Symmetric encryption helpers (Fernet / PBKDF2) for the password manager."""
+
 import base64
+import logging
 import os
+from typing import Union
+
 from cryptography.fernet import Fernet
+from cryptography.hazmat.backends import default_backend
 from cryptography.hazmat.primitives import hashes
 from cryptography.hazmat.primitives.kdf.pbkdf2 import PBKDF2HMAC
-from cryptography.hazmat.backends import default_backend
 
-# Use a fixed salt size for consistency
+logger = logging.getLogger(__name__)
+
 SALT_SIZE = 16
 
-def generate_salt(size=SALT_SIZE) -> bytes:
-    """Generates a cryptographically secure random salt."""
+# PBKDF2 iterations for key derivation. Changing this breaks existing vaults.
+KDF_ITERATIONS = 480_000
+
+# Returned by decrypt_data when a token cannot be decrypted with the given key.
+DECRYPTION_ERROR = "[Decryption Error]"
+
+
+def generate_salt(size: int = SALT_SIZE) -> bytes:
+    """Returns a cryptographically secure random salt."""
     return os.urandom(size)
 
-def derive_key(master_password: str, salt: bytes) -> bytes:
-    """Derives a secure encryption key from the master password and salt."""
-    if not isinstance(master_password, bytes):
-        password = master_password.encode('utf-8')
-    else:
-        password = master_password
 
+def derive_key(master_password: Union[str, bytes], salt: bytes) -> bytes:
+    """Derives a urlsafe-base64 Fernet key from a password and salt (PBKDF2-SHA256)."""
+    password = master_password if isinstance(master_password, bytes) else master_password.encode("utf-8")
     kdf = PBKDF2HMAC(
         algorithm=hashes.SHA256(),
-        length=32,  # Use 32 bytes for AES-256 compatibility with Fernet
+        length=32,
         salt=salt,
-        iterations=480000, # NIST recommended minimum iterations (as of 2023)
-        backend=default_backend()
+        iterations=KDF_ITERATIONS,
+        backend=default_backend(),
     )
-    key = base64.urlsafe_b64encode(kdf.derive(password))
-    return key
+    return base64.urlsafe_b64encode(kdf.derive(password))
+
 
 def encrypt_data(data: str, key: bytes) -> bytes:
-    """Encrypts data using the derived Fernet key."""
+    """Encrypts a string with a Fernet key. Empty input returns b''."""
     if not data:
-        return b''
-    f = Fernet(key)
-    return f.encrypt(data.encode('utf-8'))
+        return b""
+    return Fernet(key).encrypt(data.encode("utf-8"))
+
 
 def decrypt_data(encrypted_data: bytes, key: bytes) -> str:
-    """Decrypts data using the derived Fernet key."""
+    """Decrypts a Fernet token. Returns "" for empty input and DECRYPTION_ERROR on failure."""
     if not encrypted_data:
         return ""
     try:
-        f = Fernet(key)
-        decrypted_bytes = f.decrypt(encrypted_data)
-        return decrypted_bytes.decode('utf-8')
+        return Fernet(key).decrypt(encrypted_data).decode("utf-8")
     except Exception as e:
-        print(f"Decryption failed: {e}") # Log this properly in a real app
-        # Returning an empty string or raising a specific error might be better
-        # depending on how the caller handles failures.
-        return "[Decryption Error]"
+        logger.error("Decryption failed: %s", type(e).__name__)
+        return DECRYPTION_ERROR
+
+
+def generate_vault_key() -> bytes:
+    """Generates a random Fernet key used to encrypt all vault data."""
+    return Fernet.generate_key()
+
+
+def wrap_key(key: bytes, wrapping_key: bytes) -> str:
+    """Encrypts a key with another (derived) key; returns a storable string."""
+    return Fernet(wrapping_key).encrypt(key).decode("utf-8")
+
+
+def unwrap_key(wrapped: str, wrapping_key: bytes) -> bytes:
+    """Reverses wrap_key. Raises cryptography.fernet.InvalidToken on a wrong key."""
+    return Fernet(wrapping_key).decrypt(wrapped.encode("utf-8"))
